@@ -2,8 +2,73 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gestion de stock & courses</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Mon Stock & Courses</title>
+<meta name="description" content="Gérez votre stock et votre liste de courses">
+<meta name="theme-color" content="#2D5A3D">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mon Stock">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.svg">
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAeSPX0ZG3gv-Pi5AiV0sPtoh91kdTHpHw",
+  authDomain: "mon-stock-2da85.firebaseapp.com",
+  projectId: "mon-stock-2da85",
+  storageBucket: "mon-stock-2da85.firebasestorage.app",
+  messagingSenderId: "21193690692",
+  appId: "1:21193690692:web:a6fb06fc69fd2aaced3611"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+const DOC = doc(db, 'userdata', 'main');
+
+let syncTimeout = null;
+let ignoreNext  = false;
+
+// Upload to Firebase (debounced 1.5s)
+window.firebaseSave = function(data) {
+  clearTimeout(syncTimeout);
+  syncTimeout = setTimeout(async () => {
+    try {
+      await setDoc(DOC, data);
+      showSyncStatus('✓ Synchronisé', '#1E5C30');
+    } catch(e) {
+      showSyncStatus('⚠ Sync échouée', '#8B2020');
+    }
+  }, 1500);
+};
+
+// Listen for remote changes
+onSnapshot(DOC, (snap) => {
+  if (!snap.exists()) return;
+  if (ignoreNext) { ignoreNext = false; return; }
+  const data = snap.data();
+  if (typeof window.applyRemoteData === 'function') {
+    window.applyRemoteData(data);
+    showSyncStatus('↓ Mis à jour', '#1A3A6B');
+  }
+});
+
+function showSyncStatus(msg, color) {
+  let el = document.getElementById('sync-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.style.opacity = '0', 3000);
+}
+
+window.firebaseReady = true;
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@300;500&family=DM+Sans:wght@300;400;500&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -272,6 +337,9 @@ main{padding:16px 14px 100px;max-width:960px;margin:0 auto}
     <span class="tab-icon">🛒</span>Liste de courses
     <span id="courses-badge" style="display:none;background:rgba(255,255,255,.25);border-radius:10px;padding:1px 7px;font-size:.68rem"></span>
   </button>
+  <div style="display:flex;align-items:center;padding:0 12px;flex-shrink:0">
+    <span id="sync-status" style="font-size:.68rem;color:rgba(255,255,255,.7);transition:opacity 1s;opacity:0;white-space:nowrap">☁ sync</span>
+  </div>
 </div>
 
 <!-- ══ STOCK TAB ══ -->
@@ -359,11 +427,19 @@ let bought = lsGet('mgr_bought', {});
 let shoppingMeta  = lsGet('mgr_sh_meta',  {});
 let shoppingOrder = lsGet('mgr_sh_order', []);
 
-function saveStock()  { try{localStorage.setItem('mgr_stock',  JSON.stringify(stock));}catch(e){} updateShoppingList(); updateBadge(); updateStockCounter(); }
-function saveCustom() { try{localStorage.setItem('mgr_custom', JSON.stringify(custom));}catch(e){} }
-function saveBought() { try{localStorage.setItem('mgr_bought', JSON.stringify(bought));}catch(e){} }
-function saveShMeta()  { try{localStorage.setItem('mgr_sh_meta',  JSON.stringify(shoppingMeta));}catch(e){} }
-function saveShOrder() { try{localStorage.setItem('mgr_sh_order', JSON.stringify(shoppingOrder));}catch(e){} }
+function allData() {
+  return { stock, custom, bought, shoppingMeta, shoppingOrder };
+}
+function triggerCloudSync() {
+  if (window.firebaseReady && window.firebaseSave) {
+    window.firebaseSave(allData());
+  }
+}
+function saveStock()  { try{localStorage.setItem('mgr_stock',  JSON.stringify(stock));}catch(e){} updateShoppingList(); updateBadge(); updateStockCounter(); triggerCloudSync(); }
+function saveCustom() { try{localStorage.setItem('mgr_custom', JSON.stringify(custom));}catch(e){} triggerCloudSync(); }
+function saveBought() { try{localStorage.setItem('mgr_bought', JSON.stringify(bought));}catch(e){} triggerCloudSync(); }
+function saveShMeta()  { try{localStorage.setItem('mgr_sh_meta',  JSON.stringify(shoppingMeta));}catch(e){} triggerCloudSync(); }
+function saveShOrder() { try{localStorage.setItem('mgr_sh_order', JSON.stringify(shoppingOrder));}catch(e){} triggerCloudSync(); }
 
 // ── Export / Import ───────────────────────────────────────────────────────────
 function exportData() {
@@ -1025,7 +1101,17 @@ function printShopping() {
   });
   if (!lines.length) { alert('Aucun article à acheter.'); return; }
   const win = window.open('','_blank');
-  win.document.write(`<html><head><title>Liste de courses</title><style>body{font-family:Georgia,serif;max-width:600px;margin:40px auto;color:#222;font-size:14px}h1{font-size:1.4rem;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.9}</style></head><body><h1>🛒 Liste de courses</h1><pre>${lines.join('\n')}</pre></body></html>`);
+  win.document.write(`<html><head><title>Liste de courses</title><style>body{font-family:Georgia,serif;max-width:600px;margin:40px auto;color:#222;font-size:14px}h1{font-size:1.4rem;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.9}</style></head><body><h1>🛒 Liste de courses</h1><pre>${lines.join('\n')}</pre>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(r => console.log('SW enregistré'))
+      .catch(e => console.log('SW erreur:', e));
+  });
+}
+</script>
+</body></html>`);
   win.document.close(); win.print();
 }
 
@@ -1043,7 +1129,17 @@ function printStock() {
     });
   });
   const win = window.open('','_blank');
-  win.document.write(`<html><head><title>État du stock</title><style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;color:#222;font-size:13px}h1{font-size:1.4rem;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.8}</style></head><body><h1>📦 État du stock</h1><pre>${lines.join('\n')}</pre></body></html>`);
+  win.document.write(`<html><head><title>État du stock</title><style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;color:#222;font-size:13px}h1{font-size:1.4rem;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.8}</style></head><body><h1>📦 État du stock</h1><pre>${lines.join('\n')}</pre>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(r => console.log('SW enregistré'))
+      .catch(e => console.log('SW erreur:', e));
+  });
+}
+</script>
+</body></html>`);
   win.document.close(); win.print();
 }
 
@@ -1285,15 +1381,64 @@ function showAllStock(btn) {
   document.querySelectorAll('#mainStock .section').forEach(s=>s.style.display='');
 }
 
+// ── Apply data received from Firebase ────────────────────────────────────────
+window.applyRemoteData = function(data) {
+  if (!data) return;
+  // Only update if remote data is different (simple check)
+  const localStr = JSON.stringify({ stock, custom, bought, shoppingMeta, shoppingOrder });
+  const remoteStr = JSON.stringify({
+    stock:         data.stock         || {},
+    custom:        data.custom        || {},
+    bought:        data.bought        || {},
+    shoppingMeta:  data.shoppingMeta  || {},
+    shoppingOrder: data.shoppingOrder || []
+  });
+  if (localStr === remoteStr) return; // no change
+
+  stock         = data.stock         || {};
+  custom        = data.custom        || {};
+  bought        = data.bought        || {};
+  shoppingMeta  = data.shoppingMeta  || {};
+  shoppingOrder = data.shoppingOrder || [];
+
+  // Persist locally too
+  try { localStorage.setItem('mgr_stock',    JSON.stringify(stock));    } catch(e){}
+  try { localStorage.setItem('mgr_custom',   JSON.stringify(custom));   } catch(e){}
+  try { localStorage.setItem('mgr_bought',   JSON.stringify(bought));   } catch(e){}
+  try { localStorage.setItem('mgr_sh_meta',  JSON.stringify(shoppingMeta));  } catch(e){}
+  try { localStorage.setItem('mgr_sh_order', JSON.stringify(shoppingOrder)); } catch(e){}
+
+  // Rebuild UI
+  document.getElementById('navStock').innerHTML = '<button class="pill active" onclick="showAllStock(this)">Tout</button>';
+  document.getElementById('mainStock').innerHTML = '';
+  buildStockUI();
+  updateShoppingList();
+};
+
 // Init
 buildStockUI();
 updateShoppingList();
+
+// Ouvrir directement l'onglet courses si ?tab=courses dans l'URL
+if (new URLSearchParams(window.location.search).get('tab') === 'courses') {
+  switchTab('courses');
+}
 
 // Sauvegarde automatique toutes les 30s
 setInterval(() => { saveStock(); saveCustom(); saveBought(); }, 30000);
 
 // Rappel à la fermeture si données non sauvegardées sur file://
 window.addEventListener('beforeunload', () => { saveStock(); saveCustom(); saveBought(); });
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(r => console.log('SW enregistré'))
+      .catch(e => console.log('SW erreur:', e));
+  });
+}
 </script>
 </body>
 </html>
